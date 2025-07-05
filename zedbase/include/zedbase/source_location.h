@@ -15,6 +15,6 @@ class SourceLocation {
 }  // namespace zedbase
 
 #define FROM_HERE          \
-  ::base::SourceLocation { \
+  ::zedbase::SourceLocation { \
     __FILE__, __LINE__     \
   }

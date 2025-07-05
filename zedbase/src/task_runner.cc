@@ -1,0 +1,87 @@
+#include "zedbase/task_runner.h"
+
+#include "zedbase/bind.h"
+#include "zedbase/bind_post_task.h"
+#include "zedbase/logging.h"
+#include "zedbase/sequenced_task_runner.h"
+#include "zedbase/threading/sequenced_task_runner_handle.h"
+
+namespace zedbase {
+
+namespace {
+
+#ifdef LIBBASE_POLICY_LEAK_ON_REPLY_POST_TASK_FAILURE
+class PostTaskAndReplyHelper {
+ public:
+  static void ExecuteTaskAndPostReply(PostTaskAndReplyHelper helper) {
+    std::move(helper.task_).Run();
+
+    const auto original_task_runner = helper.original_task_runner_;
+    const auto location = helper.location_;
+
+    original_task_runner->PostTask(
+        location,
+        BindOnce(&PostTaskAndReplyHelper::ExecuteReply, std::move(helper)));
+  }
+
+  static void ExecuteReply(PostTaskAndReplyHelper helper) {
+    std::move(helper.reply_).Run();
+  }
+
+  PostTaskAndReplyHelper(
+      SourceLocation location,
+      OnceClosure task,
+      OnceClosure reply,
+      std::shared_ptr<SequencedTaskRunner> original_task_runner)
+      : location_(std::move(location)),
+        task_(std::move(task)),
+        reply_(std::move(reply)),
+        original_task_runner_(std::move(original_task_runner)) {}
+
+  ~PostTaskAndReplyHelper() {
+    if (reply_ && original_task_runner_ &&
+        !original_task_runner_->RunsTasksInCurrentSequence()) {
+      // Leak reply callback to avoid hitting (D)CHECKs for sequence affinity
+      (void)std::make_unique<OnceClosure>(std::move(reply_)).release();
+    }
+  }
+
+  PostTaskAndReplyHelper(PostTaskAndReplyHelper&&) = default;
+  PostTaskAndReplyHelper& operator=(PostTaskAndReplyHelper&&) = default;
+
+ private:
+  SourceLocation location_;
+  OnceClosure task_;
+  OnceClosure reply_;
+  std::shared_ptr<SequencedTaskRunner> original_task_runner_;
+};
+#endif  // LIBBASE_POLICY_LEAK_ON_REPLY_POST_TASK_FAILURE
+
+}  // namespace
+
+bool TaskRunner::PostTask(SourceLocation location, OnceClosure task) {
+  const auto kNoDelay = zedbase::TimeDelta{};
+  return PostDelayedTask(std::move(location), std::move(task), kNoDelay);
+}
+
+bool TaskRunner::PostTaskAndReply(SourceLocation location,
+                                  OnceClosure task,
+                                  OnceClosure reply) {
+  ZED_DCHECK(task);
+  ZED_DCHECK(reply);
+  ZED_DCHECK(SequencedTaskRunnerHandle::IsSet());
+
+#ifdef LIBBASE_POLICY_LEAK_ON_REPLY_POST_TASK_FAILURE
+  return PostTask(location,
+                  BindOnce(&PostTaskAndReplyHelper::ExecuteTaskAndPostReply,
+                           PostTaskAndReplyHelper{
+                               location, std::move(task), std::move(reply),
+                               SequencedTaskRunnerHandle::Get()}));
+#else   // LIBBASE_POLICY_LEAK_ON_REPLY_POST_TASK_FAILURE
+  return PostTask(location, std::move(task).Then(zedbase::BindPostTask(
+                                SequencedTaskRunnerHandle::Get(),
+                                std::move(reply), location)));
+#endif  // LIBBASE_POLICY_LEAK_ON_REPLY_POST_TASK_FAILURE
+}
+
+}  // namespace zedbase

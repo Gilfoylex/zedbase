@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/sequence_checker.h"
+#include "zedbase/sequence_checker.h"
 
 namespace zedbase {
 
@@ -72,12 +72,12 @@ class WeakPtr {
   }
 
   T* operator->() const {
-    DCHECK(Get());
+    ZED_DCHECK(Get());
     return Get();
   }
 
   T& operator*() const {
-    DCHECK(Get());
+    ZED_DCHECK(Get());
     return *Get();
   }
 
@@ -153,7 +153,7 @@ class WeakPtrFactory {
   explicit WeakPtrFactory(T* ptr)
       : ptr_(ptr),
         control_block_(std::make_shared<detail::WeakPtrControlBlock>()) {
-    DCHECK(ptr_);
+    ZED_DCHECK(ptr_);
   }
 
   WeakPtrFactory(const WeakPtrFactory&) = delete;
@@ -169,13 +169,13 @@ class WeakPtrFactory {
   }
 
   void InvalidateWeakPtrs() {
-    DCHECK(control_block_);
+    ZED_DCHECK(control_block_);
     DCHECK_CALLED_ON_VALID_SEQUENCE(control_block_->sequence_checker);
     control_block_ = std::make_shared<detail::WeakPtrControlBlock>();
   }
 
   bool HasWeakPtrs() const {
-    DCHECK(control_block_);
+    ZED_DCHECK(control_block_);
     return (control_block_->weak_count > 0);
   }
 
